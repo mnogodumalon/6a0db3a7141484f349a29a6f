@@ -1,0 +1,10 @@
+{
+  "entities": {
+    "Anmerkungen": {
+      "placeholders_set": 3,
+      "defaults_keys": ["status"],
+      "computed_keys": [],
+      "reason": "Reine Stammdaten (Notizen, Priorität, Status) ohne numerische Felder oder Beziehungen — keine Berechnungen möglich"
+    }
+  }
+}

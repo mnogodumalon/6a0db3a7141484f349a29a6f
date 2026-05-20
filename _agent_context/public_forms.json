@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "forms": [
+    {
+      "entity": "anmerkungen",
+      "app_id": "6a0db38dcfc96d613a9f88ac",
+      "path": "/rest/apps/6a0db38dcfc96d613a9f88ac/records",
+      "allowed_fields": [
+        "beschreibung",
+        "prioritaet",
+        "status"
+      ],
+      "pow": true,
+      "pow_difficulty": 50000,
+      "title": "Anmerkungen — Formular"
+    }
+  ]
+}
