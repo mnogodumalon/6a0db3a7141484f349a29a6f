@@ -1,20 +1,25 @@
 import { useDashboardData } from '@/hooks/useDashboardData';
 import type { Anmerkungen } from '@/types/app';
-import { LivingAppsService } from '@/services/livingAppsService';
+import { LOOKUP_OPTIONS } from '@/types/app';
+import { LivingAppsService, uploadFile } from '@/services/livingAppsService';
 import { formatDate } from '@/lib/formatters';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AnmerkungenDialog } from '@/components/dialogs/AnmerkungenDialog';
 import { AI_PHOTO_SCAN, AI_PHOTO_LOCATION } from '@/config/ai-features';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import {
   IconAlertCircle,
   IconTool,
   IconRefresh,
   IconCheck,
   IconPlus,
-  IconPencil,
   IconTrash,
   IconFlag,
   IconPhoto,
@@ -23,16 +28,17 @@ import {
   IconCircleCheck,
   IconCircleX,
   IconArrowRight,
+  IconUpload,
 } from '@tabler/icons-react';
 
 const APPGROUP_ID = '6a0db3a7141484f349a29a6f';
 const REPAIR_ENDPOINT = '/claude/build/repair';
 
 const STATUS_COLUMNS = [
-  { key: 'offen', label: 'Offen', icon: IconCircleDot, color: 'text-gray-400', bg: 'bg-white border-gray-200', badge: 'bg-gray-100 text-gray-600' },
-  { key: 'in_bearbeitung', label: 'In Bearbeitung', icon: IconArrowRight, color: 'text-yellow-500', bg: 'bg-yellow-50 border-yellow-200', badge: 'bg-yellow-100 text-yellow-700' },
-  { key: 'geloest', label: 'Abgeschlossen', icon: IconCircleCheck, color: 'text-green-500', bg: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700' },
-  { key: 'geschlossen', label: 'On Hold', icon: IconCircleX, color: 'text-gray-400', bg: 'bg-gray-50 border-gray-200', badge: 'bg-gray-100 text-gray-500' },
+  { key: 'offen', label: 'Offen', icon: IconCircleDot, color: 'text-gray-400', bg: 'bg-white border-gray-200', badge: 'bg-gray-100 text-gray-600', dropHighlight: 'ring-2 ring-gray-300 bg-gray-50' },
+  { key: 'in_bearbeitung', label: 'In Bearbeitung', icon: IconArrowRight, color: 'text-yellow-500', bg: 'bg-yellow-50 border-yellow-200', badge: 'bg-yellow-100 text-yellow-700', dropHighlight: 'ring-2 ring-yellow-300 bg-yellow-50' },
+  { key: 'geloest', label: 'Abgeschlossen', icon: IconCircleCheck, color: 'text-green-500', bg: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700', dropHighlight: 'ring-2 ring-green-300 bg-green-50' },
+  { key: 'geschlossen', label: 'On Hold', icon: IconCircleX, color: 'text-gray-400', bg: 'bg-gray-50 border-gray-200', badge: 'bg-gray-100 text-gray-500', dropHighlight: 'ring-2 ring-gray-300 bg-gray-100' },
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -42,12 +48,29 @@ const PRIORITY_COLORS: Record<string, string> = {
   niedrig: 'text-muted-foreground',
 };
 
+const PRIO_OPTIONS = LOOKUP_OPTIONS['anmerkungen']?.['prioritaet'] ?? [];
+const STATUS_OPTIONS = LOOKUP_OPTIONS['anmerkungen']?.['status'] ?? [];
+
 export default function DashboardOverview() {
   const { anmerkungen, loading, error, fetchAll } = useDashboardData();
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editRecord, setEditRecord] = useState<Anmerkungen | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Anmerkungen | null>(null);
+  // Create dialog
+  const [createOpen, setCreateOpen] = useState(false);
+
+  // Detail panel state
+  const [detailRecord, setDetailRecord] = useState<Anmerkungen | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editPrio, setEditPrio] = useState('');
+  const [editStatus, setEditStatus] = useState('');
+  const [editScreenshot, setEditScreenshot] = useState('');
+  const [savingDetail, setSavingDetail] = useState(false);
+  const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+
+
+  // Drag-and-drop state
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
 
   const byStatus = useMemo(() => {
     const map: Record<string, Anmerkungen[]> = {};
@@ -60,27 +83,83 @@ export default function DashboardOverview() {
     return map;
   }, [anmerkungen]);
 
+  const openDetail = useCallback((record: Anmerkungen) => {
+    const lines = (record.fields.beschreibung ?? '').split('\n');
+    const title = lines[0]?.trim() ?? '';
+    const desc = lines.slice(1).join('\n').trim();
+    setEditTitle(title);
+    setEditDesc(desc);
+    setEditPrio(record.fields.prioritaet?.key ?? '');
+    setEditStatus(record.fields.status?.key ?? 'offen');
+    setEditScreenshot(record.fields.screenshot ?? '');
+    setDetailRecord(record);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setDetailRecord(null);
+  }, []);
+
   const handleCreate = async (fields: Anmerkungen['fields']) => {
-    await LivingAppsService.createAnmerkungenEntry(fields);
+    await LivingAppsService.createAnmerkungenEntry({ ...fields, status: 'offen' } as any);
     fetchAll();
   };
 
-  const handleEdit = async (fields: Anmerkungen['fields']) => {
-    if (!editRecord) return;
-    await LivingAppsService.updateAnmerkungenEntry(editRecord.record_id, fields);
+  const handleDetailSave = async () => {
+    if (!detailRecord) return;
+    setSavingDetail(true);
+    try {
+      const beschreibung = editDesc.trim()
+        ? `${editTitle}\n${editDesc}`
+        : editTitle;
+      await LivingAppsService.updateAnmerkungenEntry(detailRecord.record_id, {
+        beschreibung,
+        prioritaet: editPrio || undefined,
+        status: editStatus || undefined,
+        screenshot: editScreenshot || undefined,
+      } as any);
+      fetchAll();
+      setDetailRecord(null);
+    } finally {
+      setSavingDetail(false);
+    }
+  };
+
+  const handleDetailDelete = async () => {
+    if (!detailRecord) return;
+    await LivingAppsService.deleteAnmerkungenEntry(detailRecord.record_id);
+    setDetailRecord(null);
     fetchAll();
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    await LivingAppsService.deleteAnmerkungenEntry(deleteTarget.record_id);
-    setDeleteTarget(null);
-    fetchAll();
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingScreenshot(true);
+    try {
+      const url = await uploadFile(file);
+      setEditScreenshot(url);
+    } finally {
+      setUploadingScreenshot(false);
+      e.target.value = '';
+    }
   };
 
   const handleStatusChange = async (record: Anmerkungen, newStatus: string) => {
-    await LivingAppsService.updateAnmerkungenEntry(record.record_id, { ...record.fields, status: newStatus as any });
+    await LivingAppsService.updateAnmerkungenEntry(record.record_id, {
+      ...record.fields,
+      status: newStatus,
+    } as any);
     fetchAll();
+  };
+
+  const handleDrop = async (colKey: string) => {
+    setDragOverCol(null);
+    if (!dragId || !colKey) return;
+    const record = anmerkungen.find(a => a.record_id === dragId);
+    if (!record) return;
+    if ((record.fields.status?.key ?? 'offen') === colKey) return;
+    setDragId(null);
+    await handleStatusChange(record, colKey);
   };
 
   if (loading) return <DashboardSkeleton />;
@@ -94,9 +173,9 @@ export default function DashboardOverview() {
           <h1 className="text-2xl font-bold text-foreground">Plattform-Notizen</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Feedback & Anmerkungen verwalten</p>
         </div>
-        <Button onClick={() => { setEditRecord(null); setDialogOpen(true); }} className="shrink-0">
+        <Button onClick={() => setCreateOpen(true)} className="shrink-0">
           <IconPlus size={16} className="mr-1.5 shrink-0" />
-          Neue Anmerkung
+          Ticket hinzufügen
         </Button>
       </div>
 
@@ -107,11 +186,11 @@ export default function DashboardOverview() {
             <IconMessage size={28} className="text-muted-foreground" stroke={1.5} />
           </div>
           <div className="text-center">
-            <p className="font-semibold text-foreground">Noch keine Anmerkungen</p>
-            <p className="text-sm text-muted-foreground mt-1">Erstelle deine erste Anmerkung</p>
+            <p className="font-semibold text-foreground">Noch keine Tickets</p>
+            <p className="text-sm text-muted-foreground mt-1">Erstelle dein erstes Ticket</p>
           </div>
-          <Button variant="outline" onClick={() => { setEditRecord(null); setDialogOpen(true); }}>
-            <IconPlus size={16} className="mr-1.5" />Anmerkung erstellen
+          <Button variant="outline" onClick={() => setCreateOpen(true)}>
+            <IconPlus size={16} className="mr-1.5" />Ticket erstellen
           </Button>
         </div>
       ) : (
@@ -119,9 +198,20 @@ export default function DashboardOverview() {
           {STATUS_COLUMNS.map(col => {
             const ColIcon = col.icon;
             const items = byStatus[col.key] ?? [];
+            const isOver = dragOverCol === col.key;
 
             return (
-              <div key={col.key} className="flex flex-col gap-3">
+              <div
+                key={col.key}
+                className="flex flex-col gap-3"
+                onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.key); }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setDragOverCol(null);
+                  }
+                }}
+                onDrop={(e) => { e.preventDefault(); handleDrop(col.key); }}
+              >
                 {/* Column header */}
                 <div className="flex items-center gap-2">
                   <ColIcon size={16} className={`shrink-0 ${col.color}`} />
@@ -129,101 +219,208 @@ export default function DashboardOverview() {
                   <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${col.badge}`}>{items.length}</span>
                 </div>
 
-                {/* Cards */}
-                <div className="flex flex-col gap-2 min-h-[80px]">
+                {/* Drop zone */}
+                <div className={`flex flex-col gap-2 min-h-[80px] rounded-xl transition-all ${isOver ? col.dropHighlight : ''}`}>
                   {items.length === 0 ? (
-                    <div className="rounded-xl border-2 border-dashed border-border/60 flex items-center justify-center py-6 text-xs text-muted-foreground">
-                      Keine Einträge
+                    <div className={`rounded-xl border-2 border-dashed flex items-center justify-center py-6 text-xs text-muted-foreground transition-colors ${isOver ? 'border-primary/40 bg-primary/5' : 'border-border/60'}`}>
+                      {isOver ? 'Hierher ziehen' : 'Keine Einträge'}
                     </div>
                   ) : (
                     items.map(record => (
-                      <AnmerkungCard
+                      <TicketCard
                         key={record.record_id}
                         record={record}
-                        statusColumns={STATUS_COLUMNS}
-                        currentStatusKey={col.key}
                         colBg={col.bg}
-                        onEdit={() => { setEditRecord(record); setDialogOpen(true); }}
-                        onDelete={() => setDeleteTarget(record)}
-                        onStatusChange={(newStatus) => handleStatusChange(record, newStatus)}
+                        isDragging={dragId === record.record_id}
+                        onClick={() => openDetail(record)}
+                        onDragStart={() => setDragId(record.record_id)}
+                        onDragEnd={() => { setDragId(null); setDragOverCol(null); }}
                       />
                     ))
                   )}
                 </div>
-
-                {/* Add button in each column */}
-                <button
-                  onClick={() => { setEditRecord(null); setDialogOpen(true); }}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1 px-2 rounded-lg hover:bg-muted/60"
-                >
-                  <IconPlus size={13} className="shrink-0" />
-                  Hinzufügen
-                </button>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Dialogs */}
+      {/* Create Dialog (default status = offen) */}
       <AnmerkungenDialog
-        open={dialogOpen}
-        onClose={() => { setDialogOpen(false); setEditRecord(null); }}
-        onSubmit={editRecord ? handleEdit : handleCreate}
-        defaultValues={editRecord?.fields}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={handleCreate}
+        defaultValues={{ status: 'offen' } as any}
         enablePhotoScan={AI_PHOTO_SCAN['Anmerkungen']}
         enablePhotoLocation={AI_PHOTO_LOCATION['Anmerkungen']}
       />
 
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Anmerkung löschen"
-        description={`Möchtest du "${deleteTarget?.fields.beschreibung?.slice(0, 60) ?? 'diese Anmerkung'}" wirklich löschen?`}
-        onConfirm={handleDelete}
-        onClose={() => setDeleteTarget(null)}
-      />
+      {/* Detail Panel (Sheet) */}
+      <Sheet open={!!detailRecord} onOpenChange={(open) => { if (!open) closeDetail(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col gap-0 p-0">
+          <SheetHeader className="px-6 py-4 border-b">
+            <SheetTitle className="text-base">Ticket-Details</SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            {/* Titel */}
+            <div className="space-y-1.5">
+              <Label htmlFor="detail-titel">Titel</Label>
+              <Input
+                id="detail-titel"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Titel eingeben..."
+              />
+            </div>
+
+            {/* Beschreibung */}
+            <div className="space-y-1.5">
+              <Label htmlFor="detail-desc">Beschreibung</Label>
+              <Textarea
+                id="detail-desc"
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                placeholder="Beschreibung eingeben..."
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+
+            {/* Screenshot */}
+            <div className="space-y-2">
+              <Label>Screenshot</Label>
+              {editScreenshot ? (
+                <div className="relative rounded-xl overflow-hidden border border-border">
+                  <img
+                    src={editScreenshot}
+                    alt="Screenshot"
+                    className="w-full object-contain max-h-48"
+                  />
+                  <button
+                    onClick={() => setEditScreenshot('')}
+                    className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+                    title="Screenshot entfernen"
+                  >
+                    <IconTrash size={13} />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-xl py-6 cursor-pointer hover:bg-muted/40 transition-colors">
+                  {uploadingScreenshot ? (
+                    <span className="inline-block w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                  ) : (
+                    <IconUpload size={20} className="text-muted-foreground" stroke={1.5} />
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    {uploadingScreenshot ? 'Wird hochgeladen...' : 'Screenshot hochladen'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleScreenshotUpload}
+                    disabled={uploadingScreenshot}
+                  />
+                </label>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Priorität */}
+            <div className="space-y-1.5">
+              <Label>Priorität</Label>
+              <Select value={editPrio} onValueChange={setEditPrio}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Priorität wählen..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIO_OPTIONS.map(opt => (
+                    <SelectItem key={opt.key} value={opt.key}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Status */}
+            <div className="space-y-1.5">
+              <Label>Status</Label>
+              <Select value={editStatus} onValueChange={setEditStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Status wählen..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map(opt => (
+                    <SelectItem key={opt.key} value={opt.key}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="border-t px-6 py-4 flex items-center gap-2 flex-wrap">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleDetailDelete}
+              disabled={savingDetail}
+            >
+              <IconTrash size={14} className="mr-1.5 shrink-0" />
+              Löschen
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" size="sm" onClick={closeDetail} disabled={savingDetail}>
+              Abbrechen
+            </Button>
+            <Button size="sm" onClick={handleDetailSave} disabled={savingDetail}>
+              {savingDetail ? (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin mr-1.5" />
+              ) : null}
+              Speichern
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
     </div>
   );
 }
 
-// ---- Sub-components ----
+// ---- TicketCard ----
 
-interface StatusColDef {
-  key: string;
-  label: string;
-  icon: React.ComponentType<{ size?: number; className?: string; stroke?: number }>;
-  color: string;
-  bg: string;
-  badge: string;
-}
-
-interface AnmerkungCardProps {
+interface TicketCardProps {
   record: Anmerkungen;
-  statusColumns: StatusColDef[];
-  currentStatusKey: string;
   colBg: string;
-  onEdit: () => void;
-  onDelete: () => void;
-  onStatusChange: (newStatus: string) => void;
+  isDragging: boolean;
+  onClick: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
 }
 
-function AnmerkungCard({ record, statusColumns, currentStatusKey, colBg, onEdit, onDelete, onStatusChange }: AnmerkungCardProps) {
+function TicketCard({ record, colBg, isDragging, onClick, onDragStart, onDragEnd }: TicketCardProps) {
   const prio = record.fields.prioritaet?.key ?? '';
   const prioColor = PRIORITY_COLORS[prio] ?? 'text-muted-foreground';
   const hasScreenshot = !!record.fields.screenshot;
 
-  const title = record.fields.beschreibung
-    ? (record.fields.beschreibung.split('\n')[0].trim() || record.fields.beschreibung.slice(0, 60))
-    : '(Kein Titel)';
-
-  const nextStatus = (() => {
-    const idx = statusColumns.findIndex(c => c.key === currentStatusKey);
-    return idx < statusColumns.length - 1 ? statusColumns[idx + 1] : null;
-  })();
+  const lines = (record.fields.beschreibung ?? '').split('\n');
+  const title = lines[0]?.trim() || '(Kein Titel)';
 
   return (
-    <div className={`rounded-xl border p-3 flex flex-col gap-2 shadow-sm transition-shadow hover:shadow-md ${colBg}`}>
-      {/* Top row: priority + date + screenshot icon */}
+    <div
+      className={`rounded-xl border p-3 flex flex-col gap-2 shadow-sm cursor-pointer transition-all select-none ${colBg} ${isDragging ? 'opacity-40 scale-95' : 'hover:shadow-md'}`}
+      draggable
+      onClick={onClick}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', record.record_id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+    >
+      {/* Top row */}
       <div className="flex items-center gap-2 min-w-0">
         {prio && (
           <div className="flex items-center gap-1 shrink-0">
@@ -235,37 +432,8 @@ function AnmerkungCard({ record, statusColumns, currentStatusKey, colBg, onEdit,
         {hasScreenshot && <IconPhoto size={13} className="text-muted-foreground shrink-0" stroke={1.5} />}
       </div>
 
-      {/* Title only */}
+      {/* Title */}
       <p className="text-sm font-medium text-foreground truncate min-w-0">{title}</p>
-
-      {/* Actions row */}
-      <div className="flex items-center gap-1.5 flex-wrap mt-1">
-        {nextStatus && (
-          <button
-            onClick={() => onStatusChange(nextStatus.key)}
-            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg font-medium transition-colors ${nextStatus.badge} hover:opacity-80`}
-          >
-            <nextStatus.icon size={11} className="shrink-0" />
-            {nextStatus.label}
-          </button>
-        )}
-        <div className="flex items-center gap-1 ml-auto">
-          <button
-            onClick={onEdit}
-            className="p-1.5 rounded-lg hover:bg-black/5 transition-colors text-muted-foreground hover:text-foreground"
-            title="Bearbeiten"
-          >
-            <IconPencil size={13} className="shrink-0" />
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
-            title="Löschen"
-          >
-            <IconTrash size={13} className="shrink-0" />
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
