@@ -5,7 +5,6 @@ import { formatDate } from '@/lib/formatters';
 import { useState, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AnmerkungenDialog } from '@/components/dialogs/AnmerkungenDialog';
 import { AI_PHOTO_SCAN, AI_PHOTO_LOCATION } from '@/config/ai-features';
@@ -30,10 +29,10 @@ const APPGROUP_ID = '6a0db3a7141484f349a29a6f';
 const REPAIR_ENDPOINT = '/claude/build/repair';
 
 const STATUS_COLUMNS = [
-  { key: 'offen', label: 'Offen', icon: IconCircleDot, color: 'text-amber-500', bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-700' },
-  { key: 'in_bearbeitung', label: 'In Bearbeitung', icon: IconArrowRight, color: 'text-blue-500', bg: 'bg-blue-50 border-blue-200', badge: 'bg-blue-100 text-blue-700' },
-  { key: 'geloest', label: 'Gelöst', icon: IconCircleCheck, color: 'text-green-500', bg: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700' },
-  { key: 'geschlossen', label: 'Geschlossen', icon: IconCircleX, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border', badge: 'bg-muted text-muted-foreground' },
+  { key: 'offen', label: 'Offen', icon: IconCircleDot, color: 'text-gray-400', bg: 'bg-white border-gray-200', badge: 'bg-gray-100 text-gray-600' },
+  { key: 'in_bearbeitung', label: 'In Bearbeitung', icon: IconArrowRight, color: 'text-yellow-500', bg: 'bg-yellow-50 border-yellow-200', badge: 'bg-yellow-100 text-yellow-700' },
+  { key: 'geloest', label: 'Abgeschlossen', icon: IconCircleCheck, color: 'text-green-500', bg: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700' },
+  { key: 'geschlossen', label: 'On Hold', icon: IconCircleX, color: 'text-gray-400', bg: 'bg-gray-50 border-gray-200', badge: 'bg-gray-100 text-gray-500' },
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -43,20 +42,12 @@ const PRIORITY_COLORS: Record<string, string> = {
   niedrig: 'text-muted-foreground',
 };
 
-const PRIORITY_BG: Record<string, string> = {
-  kritisch: 'bg-red-50 border-red-200',
-  hoch: 'bg-orange-50 border-orange-200',
-  mittel: 'bg-yellow-50 border-yellow-200',
-  niedrig: '',
-};
-
 export default function DashboardOverview() {
   const { anmerkungen, loading, error, fetchAll } = useDashboardData();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<Anmerkungen | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Anmerkungen | null>(null);
-  const [activeFilter, setActiveFilter] = useState<string | null>(null);
 
   const byStatus = useMemo(() => {
     const map: Record<string, Anmerkungen[]> = {};
@@ -68,13 +59,6 @@ export default function DashboardOverview() {
     }
     return map;
   }, [anmerkungen]);
-
-  const stats = useMemo(() => ({
-    total: anmerkungen.length,
-    kritisch: anmerkungen.filter(a => a.fields.prioritaet?.key === 'kritisch').length,
-    offen: anmerkungen.filter(a => a.fields.status?.key === 'offen' || !a.fields.status).length,
-    geloest: anmerkungen.filter(a => a.fields.status?.key === 'geloest').length,
-  }), [anmerkungen]);
 
   const handleCreate = async (fields: Anmerkungen['fields']) => {
     await LivingAppsService.createAnmerkungenEntry(fields);
@@ -116,14 +100,6 @@ export default function DashboardOverview() {
         </Button>
       </div>
 
-      {/* Stat Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatPill label="Gesamt" value={stats.total} accent="text-foreground" onClick={() => setActiveFilter(null)} active={activeFilter === null} />
-        <StatPill label="Offen" value={stats.offen} accent="text-amber-600" onClick={() => setActiveFilter(activeFilter === 'offen' ? null : 'offen')} active={activeFilter === 'offen'} />
-        <StatPill label="Kritisch" value={stats.kritisch} accent="text-red-600" onClick={() => setActiveFilter(activeFilter === 'kritisch_prio' ? null : 'kritisch_prio')} active={activeFilter === 'kritisch_prio'} />
-        <StatPill label="Gelöst" value={stats.geloest} accent="text-green-600" onClick={() => setActiveFilter(activeFilter === 'geloest' ? null : 'geloest')} active={activeFilter === 'geloest'} />
-      </div>
-
       {/* Kanban Board */}
       {anmerkungen.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -142,13 +118,7 @@ export default function DashboardOverview() {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {STATUS_COLUMNS.map(col => {
             const ColIcon = col.icon;
-            let items = byStatus[col.key] ?? [];
-
-            if (activeFilter === 'offen' && col.key !== 'offen') items = [];
-            if (activeFilter === 'geloest' && col.key !== 'geloest') items = [];
-            if (activeFilter === 'kritisch_prio') {
-              items = items.filter(a => a.fields.prioritaet?.key === 'kritisch');
-            }
+            const items = byStatus[col.key] ?? [];
 
             return (
               <div key={col.key} className="flex flex-col gap-3">
@@ -172,6 +142,7 @@ export default function DashboardOverview() {
                         record={record}
                         statusColumns={STATUS_COLUMNS}
                         currentStatusKey={col.key}
+                        colBg={col.bg}
                         onEdit={() => { setEditRecord(record); setDialogOpen(true); }}
                         onDelete={() => setDeleteTarget(record)}
                         onStatusChange={(newStatus) => handleStatusChange(record, newStatus)}
@@ -217,26 +188,6 @@ export default function DashboardOverview() {
 
 // ---- Sub-components ----
 
-interface StatPillProps {
-  label: string;
-  value: number;
-  accent: string;
-  onClick: () => void;
-  active: boolean;
-}
-
-function StatPill({ label, value, accent, onClick, active }: StatPillProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex flex-col gap-0.5 rounded-2xl border px-4 py-3 text-left transition-all ${active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border bg-card hover:border-primary/40 hover:bg-muted/40'}`}
-    >
-      <span className={`text-2xl font-bold leading-none ${accent}`}>{value}</span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </button>
-  );
-}
-
 interface StatusColDef {
   key: string;
   label: string;
@@ -250,16 +201,20 @@ interface AnmerkungCardProps {
   record: Anmerkungen;
   statusColumns: StatusColDef[];
   currentStatusKey: string;
+  colBg: string;
   onEdit: () => void;
   onDelete: () => void;
   onStatusChange: (newStatus: string) => void;
 }
 
-function AnmerkungCard({ record, statusColumns, currentStatusKey, onEdit, onDelete, onStatusChange }: AnmerkungCardProps) {
+function AnmerkungCard({ record, statusColumns, currentStatusKey, colBg, onEdit, onDelete, onStatusChange }: AnmerkungCardProps) {
   const prio = record.fields.prioritaet?.key ?? '';
-  const prioBg = PRIORITY_BG[prio] ?? '';
   const prioColor = PRIORITY_COLORS[prio] ?? 'text-muted-foreground';
   const hasScreenshot = !!record.fields.screenshot;
+
+  const title = record.fields.beschreibung
+    ? (record.fields.beschreibung.split('\n')[0].trim() || record.fields.beschreibung.slice(0, 60))
+    : '(Kein Titel)';
 
   const nextStatus = (() => {
     const idx = statusColumns.findIndex(c => c.key === currentStatusKey);
@@ -267,11 +222,11 @@ function AnmerkungCard({ record, statusColumns, currentStatusKey, onEdit, onDele
   })();
 
   return (
-    <div className={`rounded-xl border bg-card p-3 flex flex-col gap-2 shadow-sm transition-shadow hover:shadow-md ${prioBg}`}>
+    <div className={`rounded-xl border p-3 flex flex-col gap-2 shadow-sm transition-shadow hover:shadow-md ${colBg}`}>
       {/* Top row: priority + date + screenshot icon */}
       <div className="flex items-center gap-2 min-w-0">
         {prio && (
-          <div className={`flex items-center gap-1 shrink-0`}>
+          <div className="flex items-center gap-1 shrink-0">
             <IconFlag size={12} className={`shrink-0 ${prioColor}`} />
             <span className={`text-xs font-medium ${prioColor}`}>{record.fields.prioritaet?.label}</span>
           </div>
@@ -280,10 +235,8 @@ function AnmerkungCard({ record, statusColumns, currentStatusKey, onEdit, onDele
         {hasScreenshot && <IconPhoto size={13} className="text-muted-foreground shrink-0" stroke={1.5} />}
       </div>
 
-      {/* Description */}
-      {record.fields.beschreibung && (
-        <p className="text-sm text-foreground line-clamp-3 min-w-0">{record.fields.beschreibung}</p>
-      )}
+      {/* Title only */}
+      <p className="text-sm font-medium text-foreground truncate min-w-0">{title}</p>
 
       {/* Actions row */}
       <div className="flex items-center gap-1.5 flex-wrap mt-1">
@@ -299,7 +252,7 @@ function AnmerkungCard({ record, statusColumns, currentStatusKey, onEdit, onDele
         <div className="flex items-center gap-1 ml-auto">
           <button
             onClick={onEdit}
-            className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            className="p-1.5 rounded-lg hover:bg-black/5 transition-colors text-muted-foreground hover:text-foreground"
             title="Bearbeiten"
           >
             <IconPencil size={13} className="shrink-0" />
@@ -325,9 +278,6 @@ function DashboardSkeleton() {
       <div className="flex items-center justify-between">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-9 w-36" />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 rounded-2xl" />)}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-64 rounded-2xl" />)}

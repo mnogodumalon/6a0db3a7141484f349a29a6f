@@ -161,10 +161,54 @@ const [dialogOpen, setDialogOpen] = useState(false);
 />
 ```
 
-The "Neu erstellen" button appears automatically next to the search bar AND in the empty state.
-NEVER build a custom inline form — ALWAYS use the pre-generated {Entity}Dialog via `createDialog` prop.
+The "Neu erstellen" button appears next to the search bar AND in the empty state.
 
-NEVER build custom forms for record creation — ALWAYS use {Entity}Dialog. It handles all field types, validation, photo scan, and applookup fields.
+---
+
+## CRITICAL: NEVER use the pre-generated `{Entity}Dialog` inside an intent UI
+
+This is the single biggest mistake. The `{Entity}Dialog` components (KundenDialog,
+KatzenDialog, BuchungenDialog, …) are the generic CRUD forms. They show **every**
+field, in the same modal, for every situation. That is the opposite of what an
+intent UI is.
+
+An intent UI must give the user, **at each step**, only the information that
+matters for that specific decision, and the most ergonomic way to enter what's
+needed. Re-using the generic CRUD dialog defeats the entire purpose of the wizard.
+
+❌ DON'T (re-using the CRUD dialog for the "Neu erstellen" slot):
+```tsx
+<EntitySelectStep
+  ...
+  createDialog={<KundenDialog open={...} onSubmit={...} />}
+/>
+```
+Result: the user gets the full Kunden form (vorname, nachname, telefon, email,
+strasse, hausnummer, plz, ort, … plus photo-scan UI) in a modal — even when only
+"first name + last name + phone" is relevant for a quick walk-in registration.
+
+❌ DON'T (using the CRUD dialog as the main step):
+```tsx
+{step === 3 && <BuchungenDialog open onSubmit={handleSubmit} ... />}
+```
+Result: a 10-field generic modal pops over the wizard, shows fields already
+captured in earlier steps, breaks the flow, and forces the user to deal with a
+form designed for a totally different context.
+
+✅ DO (build a task-tailored inline UI per step):
+- Step "Pick a Kunde": search + list, plus an **inline mini-form** with only the
+  3–4 fields needed for a fast registration (e.g. vorname + nachname + telefon).
+  No modal, no photo-scan UI, no address fields — those can be filled later from
+  the CRUD page if ever needed.
+- Step "Pick a Katze for this Kunde": list filtered to that Kunde's cats, plus
+  inline form with only katzenname + impfstatus + besitzer (auto-filled).
+- Step "Buchungsdetails": custom inline form with a beautiful date-range picker,
+  a tile-style multi-select for Zusatzleistungen with prices, a live-updating
+  total card. NOT a 10-field modal.
+
+The wizard owns the UI for each step. It calls `LivingAppsService.create…Entry()`
+directly. The user gets a UX designed for *their current task*, not the generic
+"edit any field of this record" CRUD experience.
 
 ---
 
@@ -214,6 +258,37 @@ Each step narrows the options based on previous selections.
 - ❌ **Single-entity form** with styling → that's the existing dialog
 - ❌ **Read-only summary/stats** → belongs on the dashboard
 - ❌ **Entity list with action buttons** → that's the CRUD page with extra buttons
+
+---
+
+## CRITICAL: Never link the user from an intent UI to a CRUD subpage
+
+The CRUD subpages (`#/buchungen`, `#/kunden`, `#/katzen`, …) are generic admin
+tables and do NOT belong in the intent flow. Linking the user there mid-task or
+on success drops them into a different mental context, away from the focused
+workflow they just completed.
+
+Allowed link targets from inside an intent UI:
+- `#/` — the dashboard (the natural "home base" after a completed task)
+- `#/intents/<other-slug>` — a follow-up intent that continues the task
+
+❌ DON'T:
+```tsx
+<a href="#/buchungen">Zur Buchungsübersicht</a>
+<Button onClick={() => { window.location.hash = '/kunden'; }}>Zur Kundenliste</Button>
+```
+
+✅ DO:
+```tsx
+// Success state — return to dashboard or chain to a follow-up intent
+<Button onClick={handleReset}>Neue Buchung anlegen</Button>      // reset wizard
+<a href="#/">Zurück zum Dashboard</a>                            // home base
+<a href="#/intents/abreise-abwickeln">Weiter: Abreise abwickeln</a>  // chain
+```
+
+The dashboard is responsible for navigation to any CRUD page if the user needs it.
+The intent UI is responsible for finishing the task and returning the user to
+either a clean slate (new task) or the dashboard (overview).
 
 ---
 
@@ -272,6 +347,40 @@ For multiplelookup, send an array of key strings: `['tag1', 'tag2']`, NOT `[{key
 
 The pre-generated {Entity}Dialog handles this automatically — but when you create records
 directly via LivingAppsService in intent UI code, YOU must send plain keys.
+
+### CRITICAL: multipleapplookup field values when writing to the API
+
+`multipleapplookup/*` fields (e.g. a booking's `extras` referencing many `Zusatzleistung`
+records) expect either `null` or an **array of full record URLs** — `string[]`.
+This is the single most common bug in intent UI code that selects multiple records
+via tiles/chips/checkboxes and posts directly to the API. NEVER join, stringify, or
+collapse the array into a single string.
+
+```typescript
+// Wizard state — typical pattern: Set<recordId> toggled by tile clicks
+const [selected, setSelected] = useState<Set<string>>(new Set());
+
+// On submit — map IDs to full record URLs, send the ARRAY directly
+const urls = Array.from(selected).map(id => createRecordUrl(APP_IDS.ZUSATZLEISTUNGEN, id));
+
+// ✅ CORRECT — string[] (or undefined when empty)
+await LivingAppsService.createBuchungenEntry({
+  extras: urls.length > 0 ? urls : undefined,
+});
+
+// ❌ WRONG — API returns 422 "type none or list expected, not str"
+extras: urls.join(',')
+
+// ❌ WRONG — single URL when the field expects a list
+extras: createRecordUrl(APP_IDS.ZUSATZLEISTUNGEN, oneId)
+
+// ❌ WRONG — JSON string instead of an actual array
+extras: JSON.stringify(urls)
+```
+
+Rule of thumb: if the form-state is a `Set<id>` or `id[]`, map to URLs first, then pass
+the ARRAY directly. Singular `applookup/select` → one URL string. Multiple
+`multipleapplookup/*` → array of URL strings, always.
 
 ## Design Tokens
 
