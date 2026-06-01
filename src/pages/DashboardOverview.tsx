@@ -22,7 +22,6 @@ import {
   IconPlus,
   IconTrash,
   IconFlag,
-  IconPhoto,
   IconMessage,
   IconCircleDot,
   IconCircleCheck,
@@ -429,11 +428,26 @@ function TicketCard({ record, colBg, isDragging, onClick, onDragStart, onDragEnd
           </div>
         )}
         <span className="ml-auto text-xs text-muted-foreground shrink-0">{formatDate(record.createdat)}</span>
-        {hasScreenshot && <IconPhoto size={13} className="text-muted-foreground shrink-0" stroke={1.5} />}
       </div>
 
       {/* Title */}
       <p className="text-sm font-medium text-foreground truncate min-w-0">{title}</p>
+
+      {/* Screenshot preview */}
+      {hasScreenshot && (
+        <div className="rounded-lg overflow-hidden border border-border/60 bg-muted/30">
+          <img
+            src={record.fields.screenshot!}
+            alt="Screenshot"
+            className="w-full object-cover object-top max-h-40 block"
+            draggable={false}
+            onError={(e) => {
+              const el = e.currentTarget.parentElement;
+              if (el) el.style.display = 'none';
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
